@@ -240,6 +240,27 @@
   </div>
 </div>
 
+<div id="apiKeyModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:300;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;width:min(480px,90vw);display:flex;flex-direction:column;gap:1rem">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <h3 style="font-size:1rem;font-weight:600">🔑 API Key Required</h3>
+      <button onclick="closeApiModal()" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;line-height:1">✕</button>
+    </div>
+    <p id="apiModalDesc" style="font-size:0.83rem;color:var(--muted);line-height:1.5"></p>
+    <div style="display:flex;flex-direction:column;gap:0.4rem">
+      <label style="font-size:0.78rem;color:var(--muted)">API Key</label>
+      <input id="apiKeyInput" type="text" placeholder="Paste your API key here…"
+        style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:0.5rem 0.75rem;font-size:0.85rem;outline:none;font-family:monospace"
+        onkeydown="if(event.key==='Enter') fetchApiData()" />
+    </div>
+    <div id="apiKeyHint" style="font-size:0.78rem;color:var(--muted);line-height:1.5"></div>
+    <div style="display:flex;gap:0.5rem;justify-content:flex-end">
+      <button onclick="closeApiModal()" class="btn secondary" style="font-size:0.82rem">Cancel</button>
+      <button onclick="fetchApiData()" class="btn" style="font-size:0.82rem">Fetch &amp; Visualize</button>
+    </div>
+  </div>
+</div>
+
 <header>
   <div class="logo">⚡ Data.gov Explorer</div>
   <div class="search-bar">
@@ -557,6 +578,8 @@ function buildResourceItem(r) {
       <div class="resource-actions">
         ${previewable ? `<button class="btn preview-btn" style="font-size:0.7rem;padding:0.28rem 0.65rem"
           data-url="${esc(url)}" data-fmt="${esc(fmtStr)}">Preview</button>` : ''}
+        ${isApi && url ? `<button class="btn api-explore-btn" style="font-size:0.7rem;padding:0.28rem 0.65rem"
+          data-url="${esc(url)}">Explore API</button>` : ''}
         ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">
           <button class="btn secondary" style="font-size:0.7rem;padding:0.28rem 0.65rem">Open ↗</button>
         </a>` : ''}
@@ -1057,7 +1080,120 @@ document.getElementById('searchInput').addEventListener('keydown', e => { if (e.
 document.addEventListener('click', e => {
   const btn = e.target.closest('.preview-btn');
   if (btn) loadPreview(null, btn.dataset.url, btn.dataset.fmt, false);
+  const apiBtn = e.target.closest('.api-explore-btn');
+  if (apiBtn) showApiKeyPanel(apiBtn.dataset.url);
 });
+
+// ── API Key Modal ─────────────────────────────────────────────────────────
+let _apiTargetUrl = '';
+
+function showApiKeyPanel(url) {
+  _apiTargetUrl = url;
+  const isEia = /eia\.gov/i.test(url);
+  const modal = document.getElementById('apiKeyModal');
+  document.getElementById('apiModalDesc').textContent =
+    isEia
+      ? 'This dataset uses the EIA (Energy Information Administration) API. Enter your free EIA API key to fetch and visualize the data.'
+      : 'This resource requires an API key. Enter it below and the app will append it to the request.';
+  document.getElementById('apiKeyHint').innerHTML = isEia
+    ? 'Don\'t have a key? <a href="https://www.eia.gov/opendata/register.php" target="_blank" rel="noopener" style="color:var(--accent)">Register free at eia.gov ↗</a> — keys are issued instantly.'
+    : '';
+  document.getElementById('apiKeyInput').value = '';
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('apiKeyInput').focus(), 50);
+}
+
+function closeApiModal() {
+  document.getElementById('apiKeyModal').style.display = 'none';
+}
+
+async function fetchApiData() {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  if (!key) { toast('Please enter an API key', 'error'); return; }
+
+  closeApiModal();
+
+  // Build URL with API key injected
+  let url = _apiTargetUrl;
+  const isEia = /eia\.gov/i.test(url);
+
+  if (isEia) {
+    // EIA query builder URLs (qb.cfm) → convert to v2 data API
+    // Try to extract a category/route, else use the SEDS default data endpoint
+    url = buildEiaDataUrl(url, key);
+  } else {
+    // Generic: append api_key param
+    url += (url.includes('?') ? '&' : '?') + 'api_key=' + encodeURIComponent(key);
+  }
+
+  // Show loading state in preview section
+  const section = document.getElementById('previewSection');
+  section.style.display = 'block';
+  document.getElementById('tableBody').innerHTML =
+    '<tr><td colspan="99" style="padding:1.5rem;text-align:center;color:var(--muted)"><div class="spinner" style="margin:0 auto"></div></td></tr>';
+  document.getElementById('tableHead').innerHTML = '';
+  document.getElementById('previewLabel').textContent = '';
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  try {
+    let result = null;
+    // Try direct fetch first, then proxies
+    for (const tryUrl of [url, ...CORS_PROXIES.map(p => p(url))]) {
+      try {
+        const res = await fetch(tryUrl);
+        if (!res.ok) continue;
+        const data = await res.json();
+        result = parseApiResponse(data);
+        if (result) break;
+      } catch (_) {}
+    }
+
+    if (!result || !result.rows.length) {
+      document.getElementById('tableBody').innerHTML =
+        `<tr><td colspan="99" style="color:var(--muted);padding:1.5rem;text-align:center">No data returned — check your API key or try a different endpoint.</td></tr>`;
+      return;
+    }
+
+    rawRows = result.rows;
+    filteredRows = [...result.rows];
+    sortCol = null;
+    document.getElementById('previewLabel').textContent = `(API · ${result.rows.length.toLocaleString()} rows loaded)`;
+    renderTableHead(result.fields);
+    renderStats(result.fields, result.rows);
+    setupChartCols(result.fields);
+    goToPage(0);
+    renderCharts();
+    toast('API data loaded!', 'success');
+  } catch (e) {
+    document.getElementById('tableBody').innerHTML =
+      `<tr><td colspan="99" style="color:var(--danger);padding:1.5rem;text-align:center">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function buildEiaDataUrl(originalUrl, key) {
+  // If it's already a v2 data URL, just append the key
+  if (originalUrl.includes('/v2/')) {
+    return originalUrl + (originalUrl.includes('?') ? '&' : '?') + 'api_key=' + encodeURIComponent(key);
+  }
+  // qb.cfm or other EIA UI URLs → use SEDS default data endpoint
+  return `https://api.eia.gov/v2/seds/data/?api_key=${encodeURIComponent(key)}&frequency=annual&data[0]=value&facets[stateId][]=US&sort[0][column]=period&sort[0][direction]=desc&length=500`;
+}
+
+function parseApiResponse(data) {
+  // EIA v2: { response: { data: [...] } }
+  if (data?.response?.data && Array.isArray(data.response.data) && data.response.data.length) {
+    return parseJSON(data.response.data);
+  }
+  // EIA v1: { series: [{ data: [[period, value], ...] }] }
+  if (data?.series?.[0]?.data) {
+    const s = data.series[0];
+    const rows = s.data.map(([period, value]) => ({ period, value, name: s.name || '', units: s.units || '' }));
+    return rows.length ? { fields: Object.keys(rows[0]), rows } : null;
+  }
+  // Fall through to generic JSON parser
+  return parseJSON(data);
+}
+
 quickSearch('population');
 </script>
 </body>
