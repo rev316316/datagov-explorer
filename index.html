@@ -344,21 +344,28 @@
 
 <script>
 // ── State ─────────────────────────────────────────────────────────────────
-// On localhost the Python proxy handles CORS; on GitHub Pages use corsproxy.io
 const IS_LOCAL = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const DATAGOV  = 'https://catalog.data.gov';
-const API_BASE = IS_LOCAL ? '/datagov' : `https://corsproxy.io/?${encodeURIComponent(DATAGOV)}`;
 
-function datagov(path) {
-  // path should start with /  e.g. /search?q=...
-  return IS_LOCAL ? `${API_BASE}${path}` : `https://corsproxy.io/?${encodeURIComponent(DATAGOV + path)}`;
-}
-
+// Proxies tried in order for both API calls and resource fetching
 const CORS_PROXIES = [
-  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
   u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
   u => `https://cors-anywhere.herokuapp.com/${u}`,
 ];
+
+// Fetch catalog.data.gov with automatic proxy fallback (remote only)
+async function datagov(path) {
+  const url = DATAGOV + path;
+  if (IS_LOCAL) return fetch('/datagov' + path);
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const res = await fetch(proxy(url));
+      if (res.ok) return res;
+    } catch (_) {}
+  }
+  throw new Error('All proxies failed — check your connection');
+}
 
 let allDatasets  = [];
 let activeDataset = null;
@@ -394,7 +401,7 @@ async function fetchSearchPage(q, org, after, replace) {
   if (after) params.set('after', after);
 
   try {
-    const res  = await fetch(datagov(`/search?${params}`));
+    const res  = await datagov(`/search?${params}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const results = data.results || [];
