@@ -293,6 +293,7 @@
     <!-- Dataset detail -->
     <div class="detail" id="detail">
       <div class="detail-header">
+        <button onclick="goHome()" style="display:inline-flex;align-items:center;gap:0.35rem;background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);padding:0.3rem 0.7rem;font-size:0.78rem;cursor:pointer;margin-bottom:0.75rem;transition:color 0.15s,border-color 0.15s" onmouseover="this.style.color='var(--text)';this.style.borderColor='var(--accent)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">← Home</button>
         <h2 id="dTitle"></h2>
         <div class="detail-badges" id="dBadges"></div>
         <p class="detail-desc" id="dDesc"></p>
@@ -467,6 +468,15 @@ function populateOrgFilter(datasets) {
 }
 
 // ── Dataset detail ────────────────────────────────────────────────────────
+function goHome() {
+  document.querySelectorAll('.dataset-item').forEach(el => el.classList.remove('active'));
+  activeDataset = null;
+  document.getElementById('welcome').style.display = '';
+  document.getElementById('detail').className = 'detail';
+  document.getElementById('previewSection').style.display = 'none';
+  document.getElementById('chartsSection').style.display = 'none';
+}
+
 function selectDataset(idx) {
   document.querySelectorAll('.dataset-item').forEach(el => el.classList.remove('active'));
   document.getElementById(`item-${idx}`)?.classList.add('active');
