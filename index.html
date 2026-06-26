@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data.gov Explorer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #222535;
+      --border: #2e3148;
+      --accent: #4f8ef7;
+      --accent2: #7c5cf7;
+      --text: #e4e6f0;
+      --muted: #8b90a8;
+      --success: #3ecf8e;
+      --warn: #f7a24f;
+      --danger: #f7504f;
+      --radius: 10px;
+    }
+
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo {
+      font-size: 1.1rem; font-weight: 700; white-space: nowrap;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .search-bar { display: flex; flex: 1; max-width: 580px; gap: 0.5rem; margin: 0 auto; }
+    .search-bar input {
+      flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); padding: 0.5rem 1rem; font-size: 0.88rem; outline: none; transition: border-color 0.2s;
+    }
+    .search-bar input:focus { border-color: var(--accent); }
+    .search-bar select {
+      background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); padding: 0.5rem 0.6rem; font-size: 0.82rem; cursor: pointer;
+    }
+    .btn {
+      background: var(--accent); color: #fff; border: none; border-radius: var(--radius);
+      padding: 0.5rem 1.1rem; font-size: 0.84rem; font-weight: 600; cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s; white-space: nowrap;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn:active { transform: scale(0.97); }
+    .btn.secondary { background: var(--surface2); border: 1px solid var(--border); color: var(--text); }
+    .btn.success-btn { background: var(--success); }
+
+    /* upload button in header */
+    .upload-btn {
+      background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); padding: 0.45rem 0.9rem; font-size: 0.82rem; font-weight: 600;
+      cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 0.4rem;
+      transition: border-color 0.2s;
+    }
+    .upload-btn:hover { border-color: var(--success); color: var(--success); }
+
+    /* ── Layout ── */
+    .layout { display: grid; grid-template-columns: 300px 1fr; height: calc(100vh - 60px); }
+
+    /* ── Sidebar ── */
+    .sidebar { background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
+    .sidebar-header { padding: 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .sidebar-header h2 { font-size: 0.82rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .result-count { font-size: 0.72rem; color: var(--muted); }
+    .dataset-list { flex: 1; overflow-y: auto; }
+    .dataset-item { padding: 0.85rem 1rem; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; }
+    .dataset-item:hover { background: var(--surface2); }
+    .dataset-item.active { background: color-mix(in srgb, var(--accent) 15%, transparent); border-left: 3px solid var(--accent); }
+    .dataset-item-title { font-size: 0.84rem; font-weight: 500; line-height: 1.4; margin-bottom: 0.35rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .dataset-meta { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+    .tag { font-size: 0.68rem; padding: 0.12rem 0.45rem; border-radius: 999px; background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+    .tag.org { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+    .tag.local { color: var(--success); border-color: color-mix(in srgb, var(--success) 30%, transparent); }
+
+    .empty-state { padding: 2rem; text-align: center; color: var(--muted); font-size: 0.85rem; }
+    .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-state { display: flex; justify-content: center; padding: 2rem; }
+
+    /* ── Drop zone overlay ── */
+    #dropOverlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 500;
+      background: color-mix(in srgb, var(--bg) 85%, transparent);
+      backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    #dropOverlay.active { display: flex; }
+    .drop-box {
+      border: 2px dashed var(--success);
+      border-radius: 16px;
+      padding: 3rem 4rem;
+      text-align: center;
+      color: var(--success);
+      pointer-events: none;
+    }
+    .drop-box .drop-icon { font-size: 3rem; margin-bottom: 1rem; }
+    .drop-box h2 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+    .drop-box p { font-size: 0.88rem; opacity: 0.7; }
+
+    /* ── Main panel ── */
+    .main { overflow-y: auto; display: flex; flex-direction: column; }
+    .welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.5rem; padding: 2rem; text-align: center; }
+    .welcome h1 { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .welcome p { color: var(--muted); max-width: 440px; line-height: 1.6; }
+    .quick-topics { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; }
+    .quick-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 999px; padding: 0.4rem 0.9rem; font-size: 0.8rem; cursor: pointer; transition: border-color 0.2s, color 0.2s; }
+    .quick-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* drag-to-upload zone in welcome */
+    .drop-welcome {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      max-width: 360px;
+      width: 100%;
+    }
+    .drop-welcome:hover, .drop-welcome.dragover { border-color: var(--success); background: color-mix(in srgb, var(--success) 6%, transparent); }
+    .drop-welcome p { font-size: 0.82rem; color: var(--muted); margin-top: 0.4rem; }
+
+    /* ── Dataset detail ── */
+    .detail { padding: 1.5rem; display: none; flex-direction: column; gap: 1.5rem; }
+    .detail.visible { display: flex; }
+    .detail-header { display: flex; flex-direction: column; gap: 0.75rem; }
+    .detail-header h2 { font-size: 1.15rem; line-height: 1.4; }
+    .detail-badges { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .badge { font-size: 0.7rem; padding: 0.2rem 0.6rem; border-radius: 999px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .badge.format { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+    .badge.org { background: color-mix(in srgb, var(--accent2) 20%, transparent); color: var(--accent2); }
+    .badge.local { background: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); }
+    .detail-desc { font-size: 0.87rem; color: var(--muted); line-height: 1.7; }
+    .detail-meta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; }
+    .meta-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; }
+    .meta-card-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+    .meta-card-value { font-size: 0.84rem; font-weight: 500; word-break: break-word; }
+    .resources-section h3 { font-size: 0.88rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .resource-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .resource-item { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem; }
+    .resource-icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; flex-shrink: 0; }
+    .resource-icon.csv { background: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); }
+    .resource-icon.json { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+    .resource-icon.api { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+    .resource-icon.other { background: var(--surface); color: var(--muted); }
+    .resource-info { flex: 1; min-width: 0; }
+    .resource-name { font-size: 0.82rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .resource-format { font-size: 0.7rem; color: var(--muted); }
+    .resource-actions { display: flex; gap: 0.4rem; }
+
+    /* fetch strategy badge */
+    .strategy-badge {
+      font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 4px;
+      background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+    }
+
+    /* ── Preview / Table ── */
+    .preview-section h3 { font-size: 0.88rem; font-weight: 600; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.79rem; }
+    th { background: var(--surface2); color: var(--muted); text-align: left; padding: 0.6rem 0.75rem; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none; }
+    th:hover { color: var(--text); }
+    th .sort-arrow { margin-left: 4px; opacity: 0.4; }
+    th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+    td { padding: 0.52rem 0.75rem; border-bottom: 1px solid var(--border); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+    .table-footer { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.75rem; font-size: 0.73rem; color: var(--muted); border-top: 1px solid var(--border); flex-wrap: wrap; gap: 0.5rem; }
+    .pagination { display: flex; gap: 0.25rem; }
+    .page-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 0.2rem 0.5rem; font-size: 0.73rem; cursor: pointer; }
+    .page-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .page-btn:hover:not(.active) { border-color: var(--accent); }
+
+    /* ── Charts ── */
+    .charts-section h3 { font-size: 0.88rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .chart-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .chart-controls label { font-size: 0.76rem; color: var(--muted); }
+    .chart-controls select { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 0.3rem 0.6rem; font-size: 0.76rem; cursor: pointer; }
+    .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .chart-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+    .chart-card h4 { font-size: 0.76rem; color: var(--muted); margin-bottom: 0.75rem; }
+    .chart-card canvas { max-height: 200px; }
+
+    /* ── Stats bar ── */
+    .stats-bar { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .stat-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem; flex: 1; min-width: 110px; }
+    .stat-card-label { font-size: 0.68rem; color: var(--muted); margin-bottom: 0.3rem; }
+    .stat-card-value { font-size: 1.25rem; font-weight: 700; color: var(--accent); }
+
+    /* ── Fetch progress ── */
+    .fetch-progress {
+      background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .fetch-step { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.5rem; }
+    .fetch-step.done { color: var(--success); }
+    .fetch-step.fail { color: var(--danger); }
+    .fetch-step.active { color: var(--text); }
+
+    /* ── Toast ── */
+    #toast { position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem; font-size: 0.82rem; z-index: 999; transform: translateY(80px); opacity: 0; transition: transform 0.3s, opacity 0.3s; max-width: 320px; }
+    #toast.show { transform: translateY(0); opacity: 1; }
+    #toast.error { border-color: var(--danger); color: var(--danger); }
+    #toast.success { border-color: var(--success); color: var(--success); }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  </style>
+</head>
+<body>
+
+<!-- Global drop overlay -->
+<div id="dropOverlay">
+  <div class="drop-box">
+    <div class="drop-icon">📂</div>
+    <h2>Drop to load file</h2>
+    <p>CSV · JSON · TSV · XLSX</p>
+  </div>
+</div>
+
+<header>
+  <div class="logo">⚡ Data.gov Explorer</div>
+  <div class="search-bar">
+    <input type="text" id="searchInput" placeholder="Search datasets…" />
+    <select id="orgFilter"><option value="">All orgs</option></select>
+    <button class="btn" onclick="runSearch()">Search</button>
+  </div>
+  <label class="upload-btn" title="Upload a local CSV, JSON, TSV, or XLSX file">
+    📁 Upload File
+    <input type="file" id="fileInput" accept=".csv,.tsv,.json,.xlsx,.xls" style="display:none" onchange="handleFileInput(this)" />
+  </label>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>Datasets</h2>
+      <span class="result-count" id="resultCount"></span>
+    </div>
+    <div class="dataset-list" id="datasetList">
+      <div class="empty-state">Search above to find datasets,<br>or click a quick topic below.</div>
+    </div>
+  </aside>
+
+  <main class="main" id="mainPanel">
+    <!-- Welcome -->
+    <div class="welcome" id="welcome">
+      <div>
+        <div style="font-size:3rem;margin-bottom:1rem">🇺🇸</div>
+        <h1>Explore U.S. Open Data</h1>
+        <p>Search thousands of datasets from federal agencies, or upload your own file to analyze it instantly.</p>
+      </div>
+      <div class="quick-topics">
+        <span class="quick-chip" onclick="quickSearch('climate')">🌡 Climate</span>
+        <span class="quick-chip" onclick="quickSearch('economy')">📈 Economy</span>
+        <span class="quick-chip" onclick="quickSearch('health')">🏥 Health</span>
+        <span class="quick-chip" onclick="quickSearch('education')">🎓 Education</span>
+        <span class="quick-chip" onclick="quickSearch('crime')">🔒 Crime</span>
+        <span class="quick-chip" onclick="quickSearch('energy')">⚡ Energy</span>
+        <span class="quick-chip" onclick="quickSearch('transportation')">🚗 Transportation</span>
+        <span class="quick-chip" onclick="quickSearch('agriculture')">🌾 Agriculture</span>
+      </div>
+      <!-- Drop zone -->
+      <div class="drop-welcome" id="dropWelcome" onclick="document.getElementById('fileInput').click()">
+        <div style="font-size:1.5rem">📂</div>
+        <strong style="font-size:0.88rem">Drop a file here or click to upload</strong>
+        <p>CSV · JSON · TSV · XLSX — analyzed instantly in your browser</p>
+      </div>
+    </div>
+
+    <!-- Dataset detail -->
+    <div class="detail" id="detail">
+      <div class="detail-header">
+        <h2 id="dTitle"></h2>
+        <div class="detail-badges" id="dBadges"></div>
+        <p class="detail-desc" id="dDesc"></p>
+      </div>
+      <div class="detail-meta-grid" id="dMeta"></div>
+      <div class="resources-section" id="resourcesSection">
+        <h3>Resources &amp; Downloads</h3>
+        <div class="resource-list" id="dResources"></div>
+      </div>
+      <div class="stats-bar" id="dStats" style="display:none"></div>
+      <div class="preview-section" id="previewSection" style="display:none">
+        <h3>
+          📊 Data Preview
+          <span style="font-size:0.73rem;color:var(--muted);font-weight:400" id="previewLabel"></span>
+        </h3>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
+          <input type="text" id="filterInput" placeholder="Filter rows…"
+            style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:0.35rem 0.75rem;font-size:0.79rem;outline:none;flex:1;max-width:250px"
+            oninput="applyFilter()" />
+          <button class="btn secondary" onclick="downloadCSV()" style="font-size:0.76rem;padding:0.35rem 0.75rem">⬇ CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table>
+          <div class="table-footer">
+            <span id="tableInfo"></span>
+            <div class="pagination" id="pagination"></div>
+          </div>
+        </div>
+      </div>
+      <div class="charts-section" id="chartsSection" style="display:none">
+        <h3>📉 Analytics</h3>
+        <div class="chart-controls">
+          <label>X axis</label><select id="xCol"></select>
+          <label>Y axis</label><select id="yCol"></select>
+          <button class="btn" onclick="renderCharts()" style="font-size:0.76rem;padding:0.35rem 0.75rem">Update</button>
+        </div>
+        <div class="chart-grid">
+          <div class="chart-card"><h4>Bar Chart</h4><canvas id="barChart"></canvas></div>
+          <div class="chart-card"><h4>Distribution</h4><canvas id="pieChart"></canvas></div>
+          <div class="chart-card" style="grid-column:1/-1"><h4>Line / Trend</h4><canvas id="lineChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+// On localhost the Python proxy handles CORS; on GitHub Pages use corsproxy.io
+const IS_LOCAL = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const DATAGOV  = 'https://catalog.data.gov';
+const API_BASE = IS_LOCAL ? '/datagov' : `https://corsproxy.io/?${encodeURIComponent(DATAGOV)}`;
+
+function datagov(path) {
+  // path should start with /  e.g. /search?q=...
+  return IS_LOCAL ? `${API_BASE}${path}` : `https://corsproxy.io/?${encodeURIComponent(DATAGOV + path)}`;
+}
+
+const CORS_PROXIES = [
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  u => `https://cors-anywhere.herokuapp.com/${u}`,
+];
+
+let allDatasets  = [];
+let activeDataset = null;
+let rawRows      = [];
+let filteredRows = [];
+let sortCol = null, sortAsc = true;
+let page = 0;
+const PAGE_SIZE  = 50;
+let chartInstances = {};
+
+// ── Search ────────────────────────────────────────────────────────────────
+async function runSearch() {
+  const q   = document.getElementById('searchInput').value.trim() || 'data';
+  const org = document.getElementById('orgFilter').value;
+  const list = document.getElementById('datasetList');
+  list.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+
+  const params = new URLSearchParams({ q, limit: 40 });
+  if (org) params.set('publisher', org);
+
+  try {
+    const res  = await fetch(datagov(`/search?${params}`));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    allDatasets = data.results || [];
+    document.getElementById('resultCount').textContent = `${allDatasets.length} results`;
+    renderList(allDatasets);
+    populateOrgFilter(allDatasets);
+  } catch (e) {
+    list.innerHTML = `<div class="empty-state" style="color:var(--danger)">Error: ${e.message}</div>`;
+    toast('Search failed — check your connection', 'error');
+  }
+}
+
+function quickSearch(term) {
+  document.getElementById('searchInput').value = term;
+  runSearch();
+}
+
+function renderList(datasets) {
+  const list = document.getElementById('datasetList');
+  if (!datasets.length) { list.innerHTML = '<div class="empty-state">No datasets found.</div>'; return; }
+  list.innerHTML = datasets.map((d, i) => {
+    const dists = d.dcat?.distribution || [];
+    const formats = [...new Set(dists.map(r => distFormat(r)).filter(Boolean))].slice(0, 3);
+    return `
+    <div class="dataset-item" onclick="selectDataset(${i})" id="item-${i}">
+      <div class="dataset-item-title">${esc(d.title)}</div>
+      <div class="dataset-meta">
+        <span class="tag org">${esc(d.organization?.name || d.publisher?.name || 'Unknown org')}</span>
+        ${formats.map(f=>`<span class="tag">${esc(f)}</span>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function populateOrgFilter(datasets) {
+  const orgs = [...new Set(datasets.map(d => d.organization?.name || d.publisher?.name).filter(Boolean))].sort();
+  const sel  = document.getElementById('orgFilter');
+  const existing = [...sel.options].map(o => o.value);
+  orgs.forEach(o => {
+    if (!existing.includes(o)) {
+      const opt = document.createElement('option');
+      opt.value = o;
+      opt.textContent = o.length > 50 ? o.slice(0, 50) + '…' : o;
+      sel.appendChild(opt);
+    }
+  });
+}
+
+// ── Dataset detail ────────────────────────────────────────────────────────
+function selectDataset(idx) {
+  document.querySelectorAll('.dataset-item').forEach(el => el.classList.remove('active'));
+  document.getElementById(`item-${idx}`)?.classList.add('active');
+
+  const d = allDatasets[idx];
+  activeDataset = d;
+  rawRows = []; filteredRows = [];
+
+  document.getElementById('welcome').style.display = 'none';
+  document.getElementById('detail').className = 'detail visible';
+  document.getElementById('resourcesSection').style.display = '';
+
+  const orgName = d.organization?.name || d.publisher?.name || '';
+  const dcat = d.dcat || {};
+
+  document.getElementById('dTitle').textContent = d.title;
+  document.getElementById('dBadges').innerHTML =
+    (orgName ? `<span class="badge org">${esc(orgName)}</span>` : '') +
+    (dcat.license ? `<span class="badge format">${esc(dcat.license)}</span>` : '');
+  document.getElementById('dDesc').textContent = d.description || dcat.description || 'No description available.';
+
+  const distributions = dcat.distribution || [];
+  const meta = [
+    { label: 'Identifier', value: d.identifier || d.slug },
+    { label: 'Modified',   value: fmt(dcat.modified) },
+    { label: 'Issued',     value: fmt(dcat.issued) },
+    { label: 'Resources',  value: distributions.length },
+    { label: 'Keywords',   value: (d.keyword || dcat.keyword || []).join(', ') || '—' },
+    { label: 'Publisher',  value: orgName || '—' },
+  ];
+  document.getElementById('dMeta').innerHTML = meta.map(m => `
+    <div class="meta-card">
+      <div class="meta-card-label">${m.label}</div>
+      <div class="meta-card-value">${esc(String(m.value))}</div>
+    </div>`).join('');
+
+  document.getElementById('dResources').innerHTML = distributions.length
+    ? distributions.map(r => buildResourceItem(r)).join('')
+    : '<div style="color:var(--muted);font-size:0.82rem">No resources attached.</div>';
+
+  document.getElementById('previewSection').style.display = 'none';
+  document.getElementById('chartsSection').style.display  = 'none';
+  document.getElementById('dStats').style.display         = 'none';
+  destroyCharts();
+}
+
+// Normalize distribution format string
+function distFormat(r) {
+  return (r.format || r.mediaType || '').replace('text/csv','CSV').replace('application/json','JSON')
+    .replace('application/vnd.ms-excel','XLS')
+    .replace('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','XLSX')
+    .toUpperCase().split('/').pop().split(';')[0].trim().slice(0,8) || 'FILE';
+}
+
+function buildResourceItem(r) {
+  const fmtStr  = distFormat(r);
+  const url     = r.downloadURL || r.accessURL || '';
+  const previewable = canPreview(r);
+  return `
+    <div class="resource-item">
+      <div class="resource-icon ${fmtClass(fmtStr)}">${esc(fmtStr).slice(0,4)}</div>
+      <div class="resource-info">
+        <div class="resource-name" title="${esc(r.title||url)}">${esc(r.title||url||'Resource')}</div>
+        <div class="resource-format">
+          ${esc(fmtStr)}
+          ${previewable ? `<span class="strategy-badge">${previewStrategyLabel(r)}</span>` : ''}
+        </div>
+      </div>
+      <div class="resource-actions">
+        ${previewable ? `<button class="btn preview-btn" style="font-size:0.7rem;padding:0.28rem 0.65rem"
+          data-url="${esc(url)}" data-fmt="${esc(fmtStr)}">Preview</button>` : ''}
+        ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">
+          <button class="btn secondary" style="font-size:0.7rem;padding:0.28rem 0.65rem">Open ↗</button>
+        </a>` : ''}
+      </div>
+    </div>`;
+}
+
+function canPreview(r) {
+  const f   = distFormat(r);
+  const url = r.downloadURL || r.accessURL || '';
+  return ['CSV','TSV','JSON','XLSX','XLS','GEOJSON'].includes(f) ||
+    /\.(csv|tsv|json|xlsx|xls|geojson)(\?|$)/i.test(url);
+}
+
+function previewStrategyLabel(r) {
+  const f = distFormat(r);
+  if (f === 'XLSX' || f === 'XLS') return 'excel';
+  if (f === 'JSON' || f === 'GEOJSON') return 'json';
+  return 'csv';
+}
+
+// ── Multi-strategy Preview ────────────────────────────────────────────────
+async function loadPreview(resourceId, url, format, datastoreActive) {
+  const section = document.getElementById('previewSection');
+  section.style.display = 'block';
+  document.getElementById('previewLabel').textContent = '';
+  document.getElementById('tableHead').innerHTML = '';
+  document.getElementById('tableBody').innerHTML = '';
+
+  // Show fetch progress UI
+  const progressId = 'fetchProgress';
+  let progressEl = document.getElementById(progressId);
+  if (!progressEl) {
+    progressEl = document.createElement('div');
+    progressEl.id = progressId;
+    progressEl.className = 'fetch-progress';
+    section.insertBefore(progressEl, section.querySelector('.table-wrap'));
+  }
+
+  const strategies = buildStrategies(resourceId, url, format, datastoreActive);
+  let rows = [], fields = [], sourceLabel = '';
+
+  for (const s of strategies) {
+    updateProgress(progressEl, strategies, s.name, 'active');
+    try {
+      const result = await s.fn();
+      if (result && result.rows.length) {
+        rows   = result.rows;
+        fields = result.fields;
+        sourceLabel = s.label;
+        updateProgress(progressEl, strategies, s.name, 'done');
+        break;
+      }
+      updateProgress(progressEl, strategies, s.name, 'fail');
+    } catch (_) {
+      updateProgress(progressEl, strategies, s.name, 'fail');
+    }
+  }
+
+  // Remove progress after short delay
+  setTimeout(() => progressEl.remove(), 1200);
+
+  if (!rows.length) {
+    document.getElementById('tableBody').innerHTML =
+      `<tr><td colspan="99" style="color:var(--muted);padding:1.5rem;text-align:center">
+        Could not load data — try "Open ↗" to download the file directly.
+      </td></tr>`;
+    return;
+  }
+
+  rawRows      = rows;
+  filteredRows = [...rows];
+  sortCol      = null;
+
+  document.getElementById('previewLabel').textContent = `(${sourceLabel} · ${rows.length.toLocaleString()} rows loaded)`;
+  renderTableHead(fields);
+  renderStats(fields, rows);
+  setupChartCols(fields);
+  goToPage(0);
+  renderCharts();
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function buildStrategies(resourceId, url, format, datastoreActive) {
+  const fmt = (format||'').toUpperCase();
+  const strategies = [];
+
+  // 1. Excel (XLSX/XLS)
+  if (fmt === 'XLSX' || fmt === 'XLS' || /\.xlsx?(\?|$)/i.test(url)) {
+    CORS_PROXIES.forEach((proxy, i) => {
+      strategies.push({
+        name: `Excel via proxy ${i+1}`, label: 'Excel (XLSX)',
+        fn: async () => fetchExcel(proxy(url)),
+      });
+    });
+  }
+
+  // 3. JSON / GeoJSON
+  else if (fmt === 'JSON' || fmt === 'GEOJSON' || /\.(geo)?json(\?|$)/i.test(url)) {
+    strategies.push({
+      name: 'Direct JSON', label: 'JSON (direct)',
+      fn: async () => {
+        const res  = await fetch(url);
+        const data = await res.json();
+        return parseJSON(data);
+      },
+    });
+    CORS_PROXIES.forEach((proxy, i) => {
+      strategies.push({
+        name: `JSON proxy ${i+1}`, label: 'JSON (proxied)',
+        fn: async () => {
+          const res  = await fetch(proxy(url));
+          const data = await res.json();
+          return parseJSON(data);
+        },
+      });
+    });
+  }
+
+  // 4. CSV / TSV / fallback text (try direct first, then proxies)
+  else {
+    const delim = fmt === 'TSV' || /\.tsv(\?|$)/i.test(url) ? '\t' : ',';
+    strategies.push({
+      name: 'Direct CSV', label: 'CSV (direct)',
+      fn: async () => {
+        const res  = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return parseDelimited(await res.text(), delim);
+      },
+    });
+    CORS_PROXIES.forEach((proxy, i) => {
+      strategies.push({
+        name: `CSV proxy ${i+1}`, label: 'CSV (proxied)',
+        fn: async () => {
+          const res  = await fetch(proxy(url));
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return parseDelimited(await res.text(), delim);
+        },
+      });
+    });
+  }
+
+  return strategies;
+}
+
+function updateProgress(el, strategies, activeName, status) {
+  const key = name => name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  el.innerHTML = strategies.map(s => {
+    let cls = '', icon = '○';
+    if (s.name === activeName) {
+      if (status === 'done')      { cls = 'done';   icon = '✓'; }
+      else if (status === 'fail') { cls = 'fail';   icon = '✗'; }
+      else                        { cls = 'active'; icon = '◌'; }
+    } else {
+      const st = el.dataset[key(s.name)];
+      if (st) { cls = st; icon = st === 'done' ? '✓' : '✗'; }
+    }
+    return `<div class="fetch-step ${cls}">${icon} ${esc(s.name)}</div>`;
+  }).join('');
+  if (status !== 'active') el.dataset[key(activeName)] = status;
+}
+
+// ── Parsers ───────────────────────────────────────────────────────────────
+function parseDelimited(text, delim = ',') {
+  const lines   = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return null;
+  const headers = splitLine(lines[0], delim);
+  const rows    = lines.slice(1).filter(l => l.trim()).map(l => {
+    const vals = splitLine(l, delim);
+    const obj  = {};
+    headers.forEach((h, i) => obj[h] = vals[i] ?? '');
+    return obj;
+  });
+  return { fields: headers, rows };
+}
+
+function splitLine(line, delim) {
+  const result = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQ = !inQ; continue; }
+    if (c === delim && !inQ) { result.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+function parseJSON(data) {
+  // GeoJSON FeatureCollection
+  if (data.type === 'FeatureCollection' && Array.isArray(data.features)) {
+    const rows = data.features.map(f => ({ ...f.properties, _geometry: f.geometry?.type || '' }));
+    return rows.length ? { fields: Object.keys(rows[0]), rows } : null;
+  }
+  // Array of objects
+  if (Array.isArray(data) && data.length) {
+    const rows = data.slice(0, 2000);
+    const fields = [...new Set(rows.flatMap(r => Object.keys(r)))];
+    return { fields, rows };
+  }
+  // Common wrappers: { data: [...] }, { results: [...] }, { records: [...] }
+  for (const key of ['data','results','records','features','items','rows','values']) {
+    if (Array.isArray(data[key]) && data[key].length) {
+      return parseJSON(data[key]);
+    }
+  }
+  return null;
+}
+
+async function fetchExcel(url) {
+  const res  = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const buf  = await res.arrayBuffer();
+  const wb   = XLSX.read(buf, { type: 'array' });
+  const ws   = wb.Sheets[wb.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  if (!data.length) return null;
+  return { fields: Object.keys(data[0]), rows: data.slice(0, 2000) };
+}
+
+// ── Local File Upload ─────────────────────────────────────────────────────
+function handleFileInput(input) {
+  if (input.files[0]) loadLocalFile(input.files[0]);
+}
+
+async function loadLocalFile(file) {
+  const name = file.name;
+  const ext  = name.split('.').pop().toLowerCase();
+
+  // Add to sidebar
+  const localDataset = {
+    _local: true,
+    title: name,
+    name:  name,
+    notes: `Local file: ${name} (${fmtSize(file.size)})`,
+    organization: { title: 'Local File' },
+    resources: [],
+    metadata_created: new Date().toISOString(),
+    metadata_modified: new Date().toISOString(),
+    tags: [],
+    state: 'active',
+  };
+  allDatasets.unshift(localDataset);
+  renderList(allDatasets);
+  selectDataset(0);
+
+  // Show as local
+  document.getElementById('dBadges').innerHTML = '<span class="badge local">📂 Local File</span>';
+  document.getElementById('resourcesSection').style.display = 'none';
+
+  const section = document.getElementById('previewSection');
+  section.style.display = 'block';
+  document.getElementById('tableHead').innerHTML = '';
+  document.getElementById('tableBody').innerHTML =
+    '<tr><td colspan="99" style="text-align:center;padding:1.5rem"><div class="spinner"></div></td></tr>';
+
+  try {
+    let result;
+    if (ext === 'xlsx' || ext === 'xls') {
+      result = await parseLocalExcel(file);
+    } else if (ext === 'json') {
+      const text = await file.text();
+      result = parseJSON(JSON.parse(text));
+    } else {
+      const text  = await file.text();
+      const delim = ext === 'tsv' ? '\t' : ',';
+      result = parseDelimited(text, delim);
+    }
+
+    if (!result || !result.rows.length) throw new Error('No data found in file');
+
+    rawRows      = result.rows;
+    filteredRows = [...result.rows];
+    sortCol      = null;
+
+    document.getElementById('previewLabel').textContent =
+      `(local file · ${result.rows.length.toLocaleString()} rows · ${result.fields.length} columns)`;
+    renderTableHead(result.fields);
+    renderStats(result.fields, result.rows);
+    setupChartCols(result.fields);
+    goToPage(0);
+    renderCharts();
+    toast(`Loaded ${name} — ${result.rows.length.toLocaleString()} rows`, 'success');
+  } catch (e) {
+    document.getElementById('tableBody').innerHTML =
+      `<tr><td colspan="99" style="color:var(--danger);padding:1rem">Error: ${esc(e.message)}</td></tr>`;
+    toast(`Could not parse ${name}`, 'error');
+  }
+}
+
+async function parseLocalExcel(file) {
+  const buf  = await file.arrayBuffer();
+  const wb   = XLSX.read(buf, { type: 'array' });
+  const ws   = wb.Sheets[wb.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  if (!data.length) return null;
+  return { fields: Object.keys(data[0]), rows: data };
+}
+
+// ── Drag & Drop ───────────────────────────────────────────────────────────
+const overlay    = document.getElementById('dropOverlay');
+const dropWelcome = document.getElementById('dropWelcome');
+
+document.addEventListener('dragenter', e => { if (hasFiles(e)) overlay.classList.add('active'); });
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) overlay.classList.remove('active'); });
+document.addEventListener('dragover',  e => { e.preventDefault(); });
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  overlay.classList.remove('active');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) loadLocalFile(file);
+});
+
+dropWelcome.addEventListener('dragover',  e => { e.preventDefault(); dropWelcome.classList.add('dragover'); });
+dropWelcome.addEventListener('dragleave', () => dropWelcome.classList.remove('dragover'));
+dropWelcome.addEventListener('drop', e => {
+  e.preventDefault();
+  dropWelcome.classList.remove('dragover');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) loadLocalFile(file);
+});
+
+function hasFiles(e) {
+  return e.dataTransfer?.types?.includes('Files');
+}
+
+// ── Table rendering ───────────────────────────────────────────────────────
+function renderTableHead(fields) {
+  document.getElementById('tableHead').innerHTML =
+    `<tr>${fields.map(f => `<th onclick="sortBy(${JSON.stringify(f)})" id="th-${slugify(f)}">${esc(f)} <span class="sort-arrow">↕</span></th>`).join('')}</tr>`;
+}
+
+function getFields() {
+  return filteredRows.length ? Object.keys(filteredRows[0]).filter(k => k !== '_id') : [];
+}
+
+function goToPage(p) { page = p; renderPage(); }
+
+function renderPage() {
+  const fields = getFields();
+  const start  = page * PAGE_SIZE;
+  const slice  = filteredRows.slice(start, start + PAGE_SIZE);
+  document.getElementById('tableBody').innerHTML = slice.map(row =>
+    `<tr>${fields.map(f => `<td title="${esc(String(row[f]??''))}">${esc(String(row[f]??''))}</td>`).join('')}</tr>`
+  ).join('');
+
+  const total = filteredRows.length;
+  const pages = Math.ceil(total / PAGE_SIZE);
+  document.getElementById('tableInfo').textContent =
+    `Rows ${start+1}–${Math.min(start+PAGE_SIZE,total)} of ${total.toLocaleString()}`;
+
+  const pag = document.getElementById('pagination');
+  if (pages <= 1) { pag.innerHTML = ''; return; }
+  const buttons = [];
+  if (page > 0) buttons.push(`<button class="page-btn" onclick="goToPage(${page-1})">‹</button>`);
+  for (let i = Math.max(0,page-2); i <= Math.min(pages-1,page+2); i++)
+    buttons.push(`<button class="page-btn${i===page?' active':''}" onclick="goToPage(${i})">${i+1}</button>`);
+  if (page < pages-1) buttons.push(`<button class="page-btn" onclick="goToPage(${page+1})">›</button>`);
+  pag.innerHTML = buttons.join('');
+}
+
+function applyFilter() {
+  const q = document.getElementById('filterInput').value.toLowerCase();
+  filteredRows = q
+    ? rawRows.filter(row => Object.values(row).some(v => String(v).toLowerCase().includes(q)))
+    : [...rawRows];
+  goToPage(0);
+}
+
+function sortBy(col) {
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = true; }
+  document.querySelectorAll('th').forEach(th => th.classList.remove('sorted'));
+  const thEl = document.getElementById(`th-${slugify(col)}`);
+  if (thEl) { thEl.classList.add('sorted'); thEl.querySelector('.sort-arrow').textContent = sortAsc ? '↑' : '↓'; }
+  filteredRows.sort((a, b) => {
+    const av = a[col]??'', bv = b[col]??'';
+    const an = parseFloat(av), bn = parseFloat(bv);
+    const cmp = !isNaN(an)&&!isNaN(bn) ? an-bn : String(av).localeCompare(String(bv));
+    return sortAsc ? cmp : -cmp;
+  });
+  goToPage(0);
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────
+function renderStats(fields, rows) {
+  const numericFields = fields.filter(f => rows.slice(0,50).some(r => !isNaN(parseFloat(r[f]))));
+  const statsBar = document.getElementById('dStats');
+  if (!numericFields.length) { statsBar.style.display = 'none'; return; }
+  const f    = numericFields[0];
+  const vals = rows.map(r => parseFloat(r[f])).filter(v => !isNaN(v));
+  const sum  = vals.reduce((a,b) => a+b, 0);
+  statsBar.style.display = 'flex';
+  statsBar.innerHTML = [
+    { label: `Sum (${f})`,  value: fmtNum(sum) },
+    { label: 'Average',     value: fmtNum(sum/vals.length) },
+    { label: 'Min',         value: fmtNum(Math.min(...vals)) },
+    { label: 'Max',         value: fmtNum(Math.max(...vals)) },
+    { label: 'Row count',   value: rows.length.toLocaleString() },
+    { label: 'Columns',     value: fields.length },
+  ].map(s => `<div class="stat-card"><div class="stat-card-label">${s.label}</div><div class="stat-card-value">${s.value}</div></div>`).join('');
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────
+function setupChartCols(fields) {
+  const xSel = document.getElementById('xCol');
+  const ySel = document.getElementById('yCol');
+  xSel.innerHTML = fields.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+  ySel.innerHTML = fields.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+  const numF = fields.find(f => rawRows.slice(0,20).some(r => !isNaN(parseFloat(r[f]))));
+  if (numF) ySel.value = numF;
+  document.getElementById('chartsSection').style.display = 'block';
+}
+
+function renderCharts() {
+  if (!filteredRows.length) return;
+  destroyCharts();
+  const xCol   = document.getElementById('xCol').value;
+  const yCol   = document.getElementById('yCol').value;
+  const sample = filteredRows.slice(0, 50);
+  const labels = sample.map(r => String(r[xCol]??'').slice(0,20));
+  const yVals  = sample.map(r => parseFloat(r[yCol]) || 0);
+  const accent = '#4f8ef7', accent2 = '#7c5cf7';
+  const palette = [accent, accent2, '#3ecf8e', '#f7a24f', '#f7504f', '#e8d44d', '#5cf7d4', '#f75ca8'];
+
+  chartInstances.bar = new Chart(document.getElementById('barChart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ label: yCol, data: yVals, backgroundColor: accent+'cc' }] },
+    options: chartOpts(),
+  });
+
+  const counts = {};
+  filteredRows.slice(0,200).forEach(r => {
+    const v = String(r[xCol]??'').slice(0,25);
+    counts[v] = (counts[v]||0) + 1;
+  });
+  const top = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  chartInstances.pie = new Chart(document.getElementById('pieChart'), {
+    type: 'doughnut',
+    data: { labels: top.map(e=>e[0]), datasets: [{ data: top.map(e=>e[1]), backgroundColor: palette }] },
+    options: { responsive: true, plugins: { legend: { labels: { color: '#8b90a8', font: { size: 10 } } } } },
+  });
+
+  chartInstances.line = new Chart(document.getElementById('lineChart'), {
+    type: 'line',
+    data: { labels, datasets: [{ label: yCol, data: yVals, borderColor: accent2, backgroundColor: accent2+'22', tension: 0.4, pointRadius: 2 }] },
+    options: chartOpts(),
+  });
+}
+
+function chartOpts() {
+  return {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#8b90a8', font: { size: 9 }, maxRotation: 45 }, grid: { color: '#2e3148' } },
+      y: { ticks: { color: '#8b90a8', font: { size: 9 } }, grid: { color: '#2e3148' } },
+    },
+  };
+}
+
+function destroyCharts() {
+  Object.values(chartInstances).forEach(c => c?.destroy?.());
+  chartInstances = {};
+}
+
+// ── Download ──────────────────────────────────────────────────────────────
+function downloadCSV() {
+  if (!filteredRows.length) return;
+  const fields = getFields();
+  const lines  = [fields.join(','), ...filteredRows.map(r =>
+    fields.map(f => `"${String(r[f]??'').replace(/"/g,'""')}"`).join(',')
+  )];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${activeDataset?.name||'data'}.csv`;
+  a.click();
+  toast('CSV downloaded!', 'success');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function slugify(s) { return s.replace(/[^a-z0-9]/gi,'-'); }
+function fmt(d) { return d ? new Date(d).toLocaleDateString() : '—'; }
+function fmtNum(n) { return isNaN(n)?'—': n%1===0 ? n.toLocaleString() : n.toLocaleString(undefined,{maximumFractionDigits:2}); }
+function fmtSize(b) { if(b>1e9) return (b/1e9).toFixed(1)+' GB'; if(b>1e6) return (b/1e6).toFixed(1)+' MB'; if(b>1e3) return (b/1e3).toFixed(1)+' KB'; return b+' B'; }
+function fmtClass(f) { const u=(f||'').toUpperCase(); if(u==='CSV'||u==='TSV') return 'csv'; if(u==='JSON'||u==='GEOJSON') return 'json'; if(u.includes('API')||u.includes('REST')) return 'api'; return 'other'; }
+
+function toast(msg, type='') {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'show'+(type?' '+type:'');
+  setTimeout(() => el.className = '', 3500);
+}
+
+document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key==='Enter') runSearch(); });
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.preview-btn');
+  if (btn) loadPreview(null, btn.dataset.url, btn.dataset.fmt, false);
+});
+quickSearch('population');
+</script>
+</body>
+</html>
