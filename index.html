@@ -367,6 +367,9 @@ let sortCol = null, sortAsc = true;
 let page = 0;
 const PAGE_SIZE  = 50;
 let chartInstances = {};
+let searchAfterCursor = null;
+let currentSearchQ = '';
+let currentSearchOrg = '';
 
 // ── Search ────────────────────────────────────────────────────────────────
 async function runSearch() {
@@ -375,21 +378,48 @@ async function runSearch() {
   const list = document.getElementById('datasetList');
   list.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
 
-  const params = new URLSearchParams({ q, limit: 40 });
+  currentSearchQ = q;
+  currentSearchOrg = org;
+  searchAfterCursor = null;
+  allDatasets = [];
+
+  await fetchSearchPage(q, org, null, true);
+}
+
+async function fetchSearchPage(q, org, after, replace) {
+  const list = document.getElementById('datasetList');
+  const params = new URLSearchParams({ q, limit: 20 });
   if (org) params.set('publisher', org);
+  if (after) params.set('after', after);
 
   try {
     const res  = await fetch(datagov(`/search?${params}`));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    allDatasets = data.results || [];
-    document.getElementById('resultCount').textContent = `${allDatasets.length} results`;
+    const results = data.results || [];
+    searchAfterCursor = results.length === 20 ? data.after : null;
+
+    if (replace) {
+      allDatasets = results;
+    } else {
+      allDatasets = [...allDatasets, ...results];
+    }
+
+    document.getElementById('resultCount').textContent =
+      `${allDatasets.length} results${searchAfterCursor ? '+' : ''}`;
     renderList(allDatasets);
     populateOrgFilter(allDatasets);
   } catch (e) {
     list.innerHTML = `<div class="empty-state" style="color:var(--danger)">Error: ${e.message}</div>`;
     toast('Search failed — check your connection', 'error');
   }
+}
+
+async function loadMoreDatasets() {
+  if (!searchAfterCursor) return;
+  const btn = document.getElementById('loadMoreBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  await fetchSearchPage(currentSearchQ, currentSearchOrg, searchAfterCursor, false);
 }
 
 function quickSearch(term) {
@@ -400,7 +430,7 @@ function quickSearch(term) {
 function renderList(datasets) {
   const list = document.getElementById('datasetList');
   if (!datasets.length) { list.innerHTML = '<div class="empty-state">No datasets found.</div>'; return; }
-  list.innerHTML = datasets.map((d, i) => {
+  const items = datasets.map((d, i) => {
     const dists = d.dcat?.distribution || [];
     const formats = [...new Set(dists.map(r => distFormat(r)).filter(Boolean))].slice(0, 3);
     return `
@@ -412,6 +442,14 @@ function renderList(datasets) {
       </div>
     </div>`;
   }).join('');
+
+  const loadMore = searchAfterCursor
+    ? `<button id="loadMoreBtn" onclick="loadMoreDatasets()"
+        style="width:100%;margin-top:0.5rem;padding:0.6rem;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--accent);cursor:pointer;font-size:0.82rem">
+        Load more datasets ↓
+      </button>`
+    : '';
+  list.innerHTML = items + loadMore;
 }
 
 function populateOrgFilter(datasets) {
