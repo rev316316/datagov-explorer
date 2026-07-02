@@ -4,8 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Data.gov Explorer</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+    integrity="sha256-oVUPFBGJmBiOHEHGJiHDXIEQhFmRQDCiipRoFgMKoBg=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"
+    integrity="sha256-SgCnVq1VIjsFQIONJqfmGWY4cVLXZ8XeHFHJlWZMNJM=" crossorigin="anonymous"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -605,7 +607,7 @@ function buildResourceItem(r) {
           data-url="${esc(url)}" data-fmt="${esc(fmtStr)}">Preview</button>` : ''}
         ${isApi && url ? `<button class="btn api-explore-btn" style="font-size:0.7rem;padding:0.28rem 0.65rem"
           data-url="${esc(url)}">Explore API</button>` : ''}
-        ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">
+        ${url ? `<a href="${esc(safeUrl(url))}" target="_blank" rel="noopener noreferrer">
           <button class="btn secondary" style="font-size:0.7rem;padding:0.28rem 0.65rem">Open ↗</button>
         </a>` : ''}
       </div>
@@ -934,7 +936,7 @@ function hasFiles(e) {
 // ── Table rendering ───────────────────────────────────────────────────────
 function renderTableHead(fields) {
   document.getElementById('tableHead').innerHTML =
-    `<tr>${fields.map(f => `<th onclick="sortBy(${JSON.stringify(f)})" id="th-${slugify(f)}">${esc(f)} <span class="sort-arrow">↕</span></th>`).join('')}</tr>`;
+    `<tr>${fields.map(f => `<th data-col="${esc(f)}" id="th-${slugify(f)}">${esc(f)} <span class="sort-arrow">↕</span></th>`).join('')}</tr>`;
 }
 
 function getFields() {
@@ -1088,6 +1090,10 @@ function downloadCSV() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function safeUrl(url) {
+  try { const u = new URL(url); return (u.protocol === 'https:' || u.protocol === 'http:') ? url : '#'; }
+  catch (_) { return '#'; }
+}
 function slugify(s) { return s.replace(/[^a-z0-9]/gi,'-'); }
 function fmt(d) { return d ? new Date(d).toLocaleDateString() : '—'; }
 function fmtNum(n) { return isNaN(n)?'—': n%1===0 ? n.toLocaleString() : n.toLocaleString(undefined,{maximumFractionDigits:2}); }
@@ -1107,6 +1113,10 @@ document.addEventListener('click', e => {
   if (btn) loadPreview(null, btn.dataset.url, btn.dataset.fmt, false);
   const apiBtn = e.target.closest('.api-explore-btn');
   if (apiBtn) showApiKeyPanel(apiBtn.dataset.url);
+  const th = e.target.closest('th[data-col]');
+  if (th) sortBy(th.dataset.col);
+  const tcard = e.target.closest('.trending-card[data-tid]');
+  if (tcard) openTrending(tcard.dataset.tid);
 });
 
 // ── API Key Modal ─────────────────────────────────────────────────────────
@@ -1120,9 +1130,10 @@ function showApiKeyPanel(url) {
     isEia
       ? 'This dataset uses the EIA (Energy Information Administration) API. Enter your free EIA API key to fetch and visualize the data.'
       : 'This resource requires an API key. Enter it below and the app will append it to the request.';
-  document.getElementById('apiKeyHint').innerHTML = isEia
-    ? 'Don\'t have a key? <a href="https://www.eia.gov/opendata/register.php" target="_blank" rel="noopener" style="color:var(--accent)">Register free at eia.gov ↗</a> — keys are issued instantly.'
-    : '';
+  document.getElementById('apiKeyHint').innerHTML = (isEia
+    ? 'Don\'t have a key? <a href="https://www.eia.gov/opendata/register.php" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">Register free at eia.gov ↗</a> — keys are issued instantly.<br><br>'
+    : '') +
+    '<span style="color:var(--warn)">⚠ Your key is sent through a third-party CORS proxy to reach this API. Do not use a key with billing permissions if you are on a public network.</span>';
   document.getElementById('apiKeyInput').value = '';
   modal.style.display = 'flex';
   setTimeout(() => document.getElementById('apiKeyInput').focus(), 50);
@@ -1236,7 +1247,7 @@ async function loadTrending() {
       const org = d.organization?.title || d.publisher?.name || '';
       const dists = (d.dcat || {}).distribution || d.resources || [];
       const formats = [...new Set(dists.map(r => (r.format || r.mediaType || '').replace('text/csv','CSV').replace('application/json','JSON').toUpperCase().split('/').pop().split(';')[0].trim().slice(0,6)).filter(Boolean))].slice(0,4);
-      return `<div class="trending-card" onclick="openTrending(${JSON.stringify(key)})">
+      return `<div class="trending-card" data-tid="${esc(key)}">
         <div class="trending-card-org">${esc(org)}</div>
         <div class="trending-card-title">${esc(d.title || d.name)}</div>
         <div class="trending-card-formats">${formats.map(f => `<span class="tag">${f}</span>`).join('')}</div>
